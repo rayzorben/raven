@@ -32,4 +32,5 @@ What it does:
   becomes `ERRORLEVEL`, and a command nothing runs sets it to 9009.
 
 As on Windows, the left side of a pipe and the command of `FOR /F` run in a command processor of their own. The right side of a pipe
-runs in this one, so a variable it sets stays set.
+runs in this one, so a variable it sets stays set. Redirections reach handles 3 to 9 (`3>log.txt`, then `1>&3`), for the commands of
+this command processor; programs it starts get the standard three.
