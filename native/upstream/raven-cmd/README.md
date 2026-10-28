@@ -31,6 +31,6 @@ What it does:
 - programs found by their path, or in the current folder and then `PATH`, with the extensions of `PATHEXT`; a program's exit code
   becomes `ERRORLEVEL`, and a command nothing runs sets it to 9009.
 
-As on Windows, the left side of a pipe and the command of `FOR /F` run in a command processor of their own. The right side of a pipe
-runs in this one, so a variable it sets stays set. Redirections reach handles 3 to 9 (`3>log.txt`, then `1>&3`), for the commands of
-this command processor; programs it starts get the standard three.
+As on Windows, both sides of a pipe and the command of `FOR /F` run in a command processor of their own, so a variable the right side
+of a pipe sets is not set afterwards (a right side that only starts a program starts it directly). Redirections reach handles 3 to 9
+(`3>log.txt`, then `1>&3`), for the commands of this command processor; programs it starts get the standard three.

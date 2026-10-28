@@ -1280,6 +1280,8 @@ static struct Node *parse_pipeline(void)
 		release(left->source);
 		left->source = duplicate(start, size);
 		++cursor;
+		skip_blanks();
+		const WCHAR *right_start = cursor;
 		struct Node *right = parse_primary();
 		if (!right) {
 			if (!incomplete)
@@ -1287,6 +1289,11 @@ static struct Node *parse_pipeline(void)
 			free_node(left);
 			return NULL;
 		}
+		size = (DWORD)(cursor - right_start);
+		while (size && blank(right_start[size - 1]))
+			--size;
+		release(right->source);
+		right->source = duplicate(right_start, size);
 		left = pair(PIPE, left, right);
 	}
 }
@@ -1532,7 +1539,35 @@ static WCHAR *processor_line(const WCHAR *text)
 	return text_take(&line);
 }
 
-/* a | b: the left side runs in a command processor of its own, writing into the pipe, while the right side reads it here. */
+struct Builtin;
+static const struct Builtin *builtin_named(const WCHAR *command, const WCHAR **end);
+static BOOL find_program(const WCHAR *name, WCHAR *found);
+static BOOL batch_file(const WCHAR *path);
+static void first_word(const WCHAR *text, WCHAR *word, DWORD limit, const WCHAR **rest);
+
+/* Whether a side of a pipe only starts a program, which can be started from here; a built-in, a block, IF, FOR or a batch file runs
+   in a command processor of its own, so that what it sets stays there. */
+static BOOL program_side(struct Node *node)
+{
+	if (node->kind != COMMAND)
+		return FALSE;
+	WCHAR *line = prepared(node->text);
+	const WCHAR *command = line;
+	while (delimiter(*command) || *command == L'@')
+		++command;
+	BOOL program = FALSE;
+	if (*command && *command != L':' && !builtin_named(command, NULL)) {
+		WCHAR name[MAX_PATH], path[MAX_PATH];
+		const WCHAR *arguments;
+		first_word(command, name, MAX_PATH, &arguments);
+		program = find_program(name, path) && !batch_file(path);
+	}
+	release(line);
+	return program;
+}
+
+/* a | b: the left side runs in a command processor of its own, writing into the pipe, and so does the right side, reading it, unless
+   it only starts a program. */
 static DWORD run_pipe(struct Node *node)
 {
 	SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
@@ -1552,7 +1587,22 @@ static DWORD run_pipe(struct Node *node)
 	SetHandleInformation(reader, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
 	const HANDLE saved_input = input;
 	input = reader;
-	const DWORD status = execute(node->right);
+	DWORD status;
+	if (program_side(node->right))
+		status = execute(node->right);
+	else {
+		text = prepared(node->right->source ? node->right->source : L"");
+		line = processor_line(text);
+		release(text);
+		HANDLE right;
+		if (launch(self, line, NULL, &right)) {
+			WaitForSingleObject(right, INFINITE);
+			GetExitCodeProcess(right, &errorlevel);
+			CloseHandle(right);
+		}
+		release(line);
+		status = errorlevel;
+	}
 	input = saved_input;
 	CloseHandle(reader);
 	if (started) {
@@ -5255,6 +5305,24 @@ static const struct Builtin builtins[] = {
 };
 
 /* Runs one command: a drive change, a built-in, or a program or batch file. */
+/* The built-in a command names, and where its name ends. The name ends at a blank or at the characters cmd lets follow it directly:
+   ECHO. CD\ CD.. ECHO( */
+static const struct Builtin *builtin_named(const WCHAR *command, const WCHAR **end)
+{
+	const WCHAR *after = command;
+	while (*after && !blank(*after) && *after != L'.' && *after != L'\\' && *after != L'/' && *after != L'(' && *after != L'=' &&
+		*after != L',' && *after != L';' && *after != L'+' && *after != L'"' && *after != L':' && *after != L'[' && *after != L']')
+		++after;
+	const DWORD size = (DWORD)(after - command);
+	for (DWORD index = 0; size && size < 16 && index < sizeof builtins / sizeof builtins[0]; ++index)
+		if (length(builtins[index].name) == size && starts(command, builtins[index].name)) {
+			if (end)
+				*end = after;
+			return &builtins[index];
+		}
+	return NULL;
+}
+
 static DWORD run_simple(const WCHAR *line)
 {
 	const WCHAR *command = line;
@@ -5270,17 +5338,9 @@ static DWORD run_simple(const WCHAR *line)
 		if (!*after)
 			return change_drive(command[0]);
 	}
-	/* A built-in's name ends at a blank or at the characters cmd lets follow it directly: ECHO. CD\ CD.. ECHO( */
-	const WCHAR *end = command;
-	while (*end && !blank(*end) && *end != L'.' && *end != L'\\' && *end != L'/' && *end != L'(' && *end != L'=' && *end != L',' &&
-		*end != L';' && *end != L'+' && *end != L'"' && *end != L':' && *end != L'[' && *end != L']')
-		++end;
-	const DWORD size = (DWORD)(end - command);
-	for (DWORD index = 0; size && size < 16 && index < sizeof builtins / sizeof builtins[0]; ++index) {
-		const struct Builtin *builtin = &builtins[index];
-		if (length(builtin->name) != size || !starts(command, builtin->name))
-			continue;
-		const WCHAR *rest = end;
+	const WCHAR *rest;
+	const struct Builtin *builtin = builtin_named(command, &rest);
+	if (builtin) {
 		const WCHAR *option = rest;
 		while (blank(*option))
 			++option;
