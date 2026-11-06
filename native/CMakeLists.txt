@@ -2167,6 +2167,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     list(APPEND PROFILE_CLIENTS ${profile_client})
                     add_test(NAME native_profile_encoding_x${width} COMMAND raven --run-process --execution=native ${profile_client})
                     set_tests_properties(native_profile_encoding_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    # Virtual keys and scan codes mapped with and without a keyboard layout, as programs' key maps do.
+                    set(keyboard_map_client ${CMAKE_CURRENT_BINARY_DIR}/keyboard-map-client${width}.exe)
+                    add_custom_command(OUTPUT ${keyboard_map_client}
+                        COMMAND ${etw_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -mno-stack-arg-probe
+                            -Wl,--entry,${etw_entry},--image-base,0x1ec00000,--no-insert-timestamp
+                            -o ${keyboard_map_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/keyboard_map_client.c -luser32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/keyboard_map_client.c VERBATIM)
+                    list(APPEND KEYBOARD_MAP_CLIENTS ${keyboard_map_client})
+                    add_test(NAME native_keyboard_map_x${width} COMMAND raven --run-process --execution=native ${keyboard_map_client})
+                    set_tests_properties(native_keyboard_map_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endif()
             endforeach()
             add_custom_target(etw_controller_fixtures ALL DEPENDS ${ETW_CLIENTS})
@@ -2174,6 +2184,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_custom_target(workstation_fixtures ALL DEPENDS ${WORKSTATION_CLIENTS})
             add_custom_target(initialize_spy_fixtures ALL DEPENDS ${INITIALIZE_SPY_CLIENTS})
             add_custom_target(profile_fixtures ALL DEPENDS ${PROFILE_CLIENTS})
+            add_custom_target(keyboard_map_fixtures ALL DEPENDS ${KEYBOARD_MAP_CLIENTS})
             set(SOCKET_MESSAGE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/socket-message-client.exe)
             add_custom_command(OUTPUT ${SOCKET_MESSAGE_CLIENT}
                 COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
